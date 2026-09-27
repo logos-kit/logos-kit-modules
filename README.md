@@ -1,72 +1,57 @@
-# logos-modules-release-base
+# logos-kit-modules
 
-A **fork-me** starting point for running your own Logos module catalog.
+The Basecamp module catalog for [Logos Kit](https://github.com/logos-kit/logos-kit):
+a wallet for the Logos Execution Zone (LEZ) that every Basecamp app can use to
+connect, send public and private payments, and sign messages.
 
-Fork this repo, add your modules as submodules, push — and you have a
-working module repository that the Logos clients (`lgpd`, the
-`package_downloader` module, the package-manager UI) can install from.
+| Module | Type | What it is |
+|---|---|---|
+| `logos_kit_wallet` | core | Keys, accounts, sync, proving, and the approval policy apps talk to |
+| `logos_kit_wallet_ui` | ui_qml | The wallet app and the approval screens for app requests |
 
-All the release machinery lives in the versioned, reusable
-[`logos-co/logos-modules-release-action`](https://github.com/logos-co/logos-modules-release-action).
-This repo only holds *your* submodules, *your* catalog metadata, and a
-thin layer of workflows that call the action. The canonical production
-catalog,
-[`logos-co/logos-modules-v2`](https://github.com/logos-co/logos-modules-v2),
-is built exactly this way.
+Builds: `darwin-arm64`, `linux-amd64`, `linux-arm64`.
 
-## Quick start
+## Install in Basecamp
 
-1. **Fork** this repo (GitHub → *Use this template* / *Fork*).
-
-2. **Edit `logos-repo.json`** — this is how clients identify your
-   catalog. Replace every `CHANGE-ME` and set `indexUrl` to point at
-   *your* fork:
-
-   ```json
-   {
-     "schemaVersion": 1,
-     "name": "my-modules",
-     "displayName": "My Modules",
-     "description": "My personal Logos modules.",
-     "homepage": "https://example.com",
-     "indexUrl": "https://github.com/<your-owner>/<your-repo>/releases/download/index/index.json",
-     "trustedSigners": []
-   }
-   ```
-
-   To also list packages published by *other* catalogs, add an `includesUrl`
-   here and the document it points at — see
-   [Drawing packages from other catalogs](#drawing-packages-from-other-catalogs).
-
-3. **Add your modules**:
-
-   ```bash
-   git clone https://github.com/<your-owner>/<your-repo>
-   cd <your-repo>
-   ./scripts/add-module.sh https://github.com/<you>/<your-module-repo>
-   git add -A && git commit -m "Add <your-module-repo>" && git push
-   ```
-
-   `add-module.sh` registers the submodule **and** generates its
-   per-module release workflow. Repeat for each module.
-
-4. **Publish.** From the repo's **Actions** tab, run **Release all
-   modules** (or an individual **Release \<module\>**) — or, from a
-   terminal, `./scripts/catalog.sh release-all`. The action builds each
-   `.lgx`, verifies it, optionally signs it, cuts a `<module>-v<version>`
-   GitHub release, and rolls everything up into the `index` release that
-   clients read.
-
-5. **Point a client at it.** Add your fork's `logos-repo.json` raw URL
-   as a repository in the package-manager UI / `lgpd`:
+1. Open **Settings → Package Repositories → Add a repository**.
+2. Paste:
 
    ```
-   https://raw.githubusercontent.com/<your-owner>/<your-repo>/<default-branch>/logos-repo.json
+   https://raw.githubusercontent.com/logos-kit/logos-kit-modules/refs/heads/main/logos-repo.json
    ```
 
-That's it. Bumping a submodule pointer (which moves its
-`metadata.json#version`) and re-running its workflow publishes a new
-version; clients pick it up on their next catalog refresh.
+3. Open the **App Manager**, find **Logos Kit Wallet**, and install it. Basecamp
+   installs `logos_kit_wallet` with it.
+
+Every package is signed. The only trusted signer is the Logos Kit release key:
+
+```
+did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IkVGM0Vyb1kwUGN4OXpvTXpPT0w0YnhQNHI1Tk03UXc1X0x1aHl4TV9ZNVkifQ
+```
+
+## How releases work
+
+`submodules/logos-kit` pins one commit of the logos-kit monorepo, and
+`modules.json` lists the modules inside it that this catalog publishes. The
+dev-only `probe_dapp` is left out.
+
+- **Release on merge** (`release-on-merge.yml`): when `main` here moves the
+  pointer, a gate checks that the commit is on logos-kit `main`, that both
+  modules declare the same version, and whether `<module>-v<version>` is
+  already fully published. Then it releases the core, then the UI. A failed or
+  partial release is redone on the next run.
+- **By hand:** **Release logos_kit_wallet** / **Release logos_kit_wallet_ui** /
+  **Release all modules** in the Actions tab, or `./scripts/catalog.sh`.
+- Signing is inline (`_release-module.yml`); the key is the `LOGOS_SIGNING_KEY`
+  secret and its DID is in `logos-repo.json`.
+- To publish another module from the monorepo:
+  `./scripts/add-module-dir.sh submodules/logos-kit/modules/<module>`.
+
+This repo started from
+[logos-co/logos-modules-release-base](https://github.com/logos-co/logos-modules-release-base),
+and all the build, verify, sign and index machinery comes from
+[logos-co/logos-modules-release-action](https://github.com/logos-co/logos-modules-release-action).
+The rest of this README is the upstream reference, lightly adapted.
 
 ## Layout
 

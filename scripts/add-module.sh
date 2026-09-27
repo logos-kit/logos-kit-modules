@@ -10,6 +10,9 @@
 #   ./scripts/add-module.sh https://github.com/me/my-cool-module
 #   ./scripts/add-module.sh https://github.com/me/my-cool-module my-cool-module main
 #
+# For a module that lives in a sub-directory of a submodule you already
+# have (a monorepo like logos-kit), use ./scripts/add-module-dir.sh.
+#
 # After running:
 #   - review `git status`
 #   - commit (.gitmodules, submodules/<name>, the new workflow file)
@@ -55,13 +58,17 @@ else
 fi
 
 echo "==> generating ${WORKFLOW}"
-sed "s/__MODULE__/${NAME}/g" "${TEMPLATE}" > "${WORKFLOW}"
+sed -e "s|__MODULE_PATH__|${PATH_REL}|g" -e "s/__MODULE__/${NAME}/g" "${TEMPLATE}" > "${WORKFLOW}"
+
+echo "==> listing ${PATH_REL} in modules.json"
+jq --arg p "${PATH_REL}" 'if (.modules | index($p)) then . else .modules += [$p] end' modules.json > modules.json.tmp
+mv modules.json.tmp modules.json
 
 cat <<EOF
 
 Done. Next:
 
-  git add .gitmodules "${PATH_REL}" "${WORKFLOW}"
+  git add .gitmodules modules.json "${PATH_REL}" "${WORKFLOW}"
   git commit -m "Add ${NAME}"
   git push
 

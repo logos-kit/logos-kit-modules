@@ -1,0 +1,127 @@
+name: Release on merge
+
+# Publishes the Logos Kit modules when `main` here moves the logos-kit
+# submodule to a version that has no complete release yet. Modelled on
+# logos-co/lez-faucet's release-on-merge.yml: the decision is a *state*
+# question ("is <module>-v<version> fully published?"), not an event one,
+# so a failed release heals on the next run instead of waiting for someone
+# to notice, and a run with nothing to do costs one small gate job.
+#
+#   pointer on logos-kit main, 0.2.0 unreleased  ->  publish 0.2.0
+#   pointer on logos-kit main, 0.2.0 released    ->  gate exits
+#   pointer NOT on logos-kit main                ->  gate fails, nothing runs
+#
+# "On logos-kit main" is the green-build guarantee: logos-kit only merges
+# to main after its stage checks pass, so a pointer to a stage branch
+# (or a force-pushed commit) can never reach the catalog by merge alone.
+# A maintainer can still publish any pointer by hand with the per-module
+# workflows.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.gitmodules'
+      - 'submodules/**'
+      - 'modules.json'
+  workflow_dispatch: {}
+
+# One group across every workflow that can publish. See release-all.yml.
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      core_needed: ${{ steps.check.outputs.core_needed }}
+      ui_needed: ${{ steps.check.outputs.ui_needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: The pointer is on logos-kit main, both modules share a version, and may need releasing
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha=$(git -C submodules/logos-kit rev-parse HEAD)
+          # `compare main...<sha>`: "behind" or "identical" means <sha> is an
+          # ancestor of (or equal to) main.
+          status=$(gh api "repos/logos-kit/logos-kit/compare/main...$sha" --jq .status)
+          echo "logos-kit $sha vs main: $status"
+          if [[ "$status" != "behind" && "$status" != "identical" ]]; then
+            echo "::error::submodules/logos-kit points at $sha, which is not on logos-kit main ($status). Merge it there first."
+            exit 1
+          fi
+
+          # The wallet UI calls methods the core it was built with implements,
+          # so the pair ships at one version (docs/dev/releasing.md in logos-kit).
+          core=$(jq -er .version submodules/logos-kit/modules/logos_kit_wallet/metadata.json)
+          ui=$(jq -er .version submodules/logos-kit/modules/logos_kit_wallet_ui/metadata.json)
+          echo "logos_kit_wallet=$core logos_kit_wallet_ui=$ui"
+          if [[ "$core" != "$ui" ]]; then
+            echo "::error::version skew: logos_kit_wallet is $core, logos_kit_wallet_ui is $ui. Release them together."
+            exit 1
+          fi
+
+          # "Published" means what the release action means: the tag exists
+          # and carries both a .lgx and a sidecar.json. Anything less is a
+          # partial publish and gets redone.
+          needs_release() {
+            local tag="$1" assets
+            assets=$(gh api "repos/$REPO/releases/tags/$tag" --jq '[.assets[].name]' 2>/dev/null) || {
+              echo "  $tag: no release" >&2; echo true; return
+            }
+            if jq -e 'any(.[]; endswith(".lgx")) and any(.[]; . == "sidecar.json")' <<<"$assets" >/dev/null; then
+              echo "  $tag: published" >&2; echo false
+            else
+              echo "  $tag: partial ($assets)" >&2; echo true
+            fi
+          }
+          core_needed=$(needs_release "logos_kit_wallet-v$core")
+          ui_needed=$(needs_release "logos_kit_wallet_ui-v$ui")
+          echo "core_needed=$core_needed" >> "$GITHUB_OUTPUT"
+          echo "ui_needed=$ui_needed" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release gate"
+            echo
+            echo "- logos-kit: \`$sha\` ($status vs main)"
+            echo "- version: \`$core\`"
+            echo "- \`logos_kit_wallet\` needs releasing: \`$core_needed\`"
+            echo "- \`logos_kit_wallet_ui\` needs releasing: \`$ui_needed\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Core first: the UI's metadata.json depends on logos_kit_wallet, which
+  # Basecamp resolves from the index.
+  core:
+    needs: gate
+    if: needs.gate.outputs.core_needed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: submodules/logos-kit/modules/logos_kit_wallet
+    secrets: inherit
+
+  ui:
+    # `always()` so the UI still publishes when core was skipped as already
+    # published; a core that *failed* still blocks it.
+    needs: [gate, core]
+    if: >-
+      always()
+      && needs.gate.outputs.ui_needed == 'true'
+      && (needs.core.result == 'success' || needs.core.result == 'skipped')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: submodules/logos-kit/modules/logos_kit_wallet_ui
+    secrets: inherit

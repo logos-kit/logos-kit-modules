@@ -4,9 +4,9 @@ name: Release all modules
 # parallel. Useful for the initial bootstrap and for coordinated
 # "everything at once" releases.
 #
-# The module list is DISCOVERED from `.gitmodules` at run time — add or
-# remove a submodule and this workflow tracks it automatically, no edits
-# here ever needed (the previous hand-maintained matrix is gone).
+# The module list is read from `modules.json` at run time (Logos Kit's
+# modules live inside one monorepo submodule, which `.gitmodules` alone
+# can't express).
 #
 # Each module is released through the same _release-module.yml local
 # reusable workflow the per-module files use, so signing config stays
@@ -25,6 +25,12 @@ on:
 permissions:
   contents: write
 
+# Shared by every workflow that can publish, so a manual run can't race
+# release-on-merge.yml writing the same tag. Never cancel mid-publish.
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -37,21 +43,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Every `path = submodules/<repo>` entry in .gitmodules.
-          paths="$(git config --file .gitmodules --get-regexp 'submodule\..*\.path$' 2>/dev/null \
-                   | awk '{print $2}' | sort -u || true)"
-          if [ -z "${paths}" ]; then
-            echo 'matrix={"module_path":[]}' >> "$GITHUB_OUTPUT"
-            echo 'count=0' >> "$GITHUB_OUTPUT"
-            echo "No submodules declared in .gitmodules — nothing to release."
-            exit 0
-          fi
-          matrix="$(printf '%s\n' ${paths} | jq -R . | jq -cs '{module_path: .}')"
-          count="$(printf '%s\n' ${paths} | wc -l | tr -d ' ')"
+          # Logos Kit is one monorepo holding several modules, so the module
+          # list is modules.json (paths inside the submodule), not .gitmodules.
+          # Order is core first; the release legs still run in parallel and
+          # the index converges because every rebuild rescans all releases.
+          matrix="$(jq -c '{module_path: .modules}' modules.json)"
+          count="$(jq '.modules | length' modules.json)"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "count=${count}"  >> "$GITHUB_OUTPUT"
           echo "Discovered ${count} module(s):"
-          printf '  %s\n' ${paths}
+          jq -r '.modules[] | "  " + .' modules.json
 
   release:
     needs: discover

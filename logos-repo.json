@@ -1,9 +1,11 @@
 {
   "schemaVersion": 1,
-  "name": "CHANGE-ME-modules",
-  "displayName": "CHANGE ME — My Logos Modules",
-  "description": "A short human description of this module catalog.",
-  "homepage": "https://example.com/modules",
-  "indexUrl": "https://github.com/CHANGE-ME-OWNER/CHANGE-ME-REPO/releases/download/index/index.json",
-  "trustedSigners": []
+  "name": "logos-kit-modules",
+  "displayName": "Logos Kit",
+  "description": "The Logos Kit wallet for the Logos Execution Zone: keys, public and private accounts, and approvals for every app in Basecamp.",
+  "homepage": "https://github.com/logos-kit/logos-kit",
+  "indexUrl": "https://github.com/logos-kit/logos-kit-modules/releases/download/index/index.json",
+  "trustedSigners": [
+    { "did": "did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IkVGM0Vyb1kwUGN4OXpvTXpPT0w0YnhQNHI1Tk03UXc1X0x1aHl4TV9ZNVkifQ", "name": "Logos Kit release key" }
+  ]
 }

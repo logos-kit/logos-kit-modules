@@ -12,8 +12,9 @@ name: _release-module
 # `uses: ./.github/workflows/_release-module.yml`.
 #
 # ── Signing modes ────────────────────────────────────────────────────
-# This catalog publishes UNSIGNED (`signing_mode: none`) — matching the
-# empty `trustedSigners` in logos-repo.json. Turn on signing when ready:
+# Logos Kit publishes SIGNED (`signing_mode: inline`). The key is the
+# `LOGOS_SIGNING_KEY` Actions secret (Ed25519 JWK from `lgx keygen`); its
+# DID is the one entry in logos-repo.json `trustedSigners`. The modes:
 #
 #   inline   — `lgx sign` runs in the workflow using a JWK secret.
 #              1. Generate an Ed25519 JWK private key.
@@ -67,7 +68,10 @@ jobs:
       # be spelled out rather than left to the action's default. A module
       # whose flake does not expose `packages.x86_64-windows` fails only
       # that leg; the other three still publish as a partial release.
-      variants: "darwin-arm64,linux-amd64,linux-arm64,windows-x86_64"
+      # Logos Kit's flakes expose aarch64-darwin, x86_64-linux and
+      # aarch64-linux (the wallet engine's root flake has no mingw target),
+      # so Windows is left out rather than shipped as a red leg.
+      variants: "darwin-arm64,linux-amd64,linux-arm64"
 
       # ─── Runners and Nix cache (set by variables, not edited here) ───
       # Unset, every job runs GitHub-hosted and only reads the Logos cache.
@@ -79,11 +83,7 @@ jobs:
       cache_environment: ${{ vars.ATTIC_ENDPOINT && 'public-cache' || '' }}
 
       # ─── Signing mode (edit here, not in each caller) ────────────────
-      signing_mode: none
-
-      # Inline signing — uncomment this line (and `signing_key:` at the
-      # bottom), then delete `signing_mode: none` above.
-      #signing_mode: inline
+      signing_mode: inline
 
       # External signing (Jenkins / HSM / hardware token). Uncomment and
       # delete `signing_mode: none`. `signing_command` runs with
@@ -106,6 +106,5 @@ jobs:
       # environment secret whose name its caller passed.
       ATTIC_TOKEN_CI: ${{ secrets.ATTIC_TOKEN_CI }}
       ATTIC_TOKEN_PUBLIC: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
-      # Inline mode reads this; none/external ignore it. Uncomment for
-      # inline mode.
-      #signing_key: ${{ secrets.LOGOS_SIGNING_KEY }}
+      # Inline mode reads this.
+      signing_key: ${{ secrets.LOGOS_SIGNING_KEY }}

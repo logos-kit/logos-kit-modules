@@ -1,0 +1,6 @@
+{
+  "modules": [
+    "submodules/logos-kit/modules/logos_kit_wallet",
+    "submodules/logos-kit/modules/logos_kit_wallet_ui"
+  ]
+}

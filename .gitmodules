@@ -16,3 +16,7 @@
 ; After cloning a fork, materialise the submodule working trees with:
 ;
 ;   git submodule update --init --recursive
+[submodule "submodules/logos-kit"]
+	path = submodules/logos-kit
+	url = https://github.com/logos-kit/logos-kit
+	branch = main
