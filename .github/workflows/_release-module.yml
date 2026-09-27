@@ -1,0 +1,111 @@
+name: _release-module
+
+# Local reusable workflow — the single place that owns this catalog's
+# signing configuration and its variant list. Every per-module workflow
+# (release-<repo>.yml) and the umbrella (release-all.yml) delegate here,
+# so switching signing modes or platforms only means editing THIS file,
+# never the callers.
+#
+# The leading underscore marks it "private": it has only `workflow_call`
+# (no `workflow_dispatch`), so it never shows up as a runnable item in
+# the Actions UI. It can only be invoked from a sibling workflow via
+# `uses: ./.github/workflows/_release-module.yml`.
+#
+# ── Signing modes ────────────────────────────────────────────────────
+# This catalog publishes UNSIGNED (`signing_mode: none`) — matching the
+# empty `trustedSigners` in logos-repo.json. Turn on signing when ready:
+#
+#   inline   — `lgx sign` runs in the workflow using a JWK secret.
+#              1. Generate an Ed25519 JWK private key.
+#              2. Add it as the `LOGOS_SIGNING_KEY` Actions secret.
+#              3. Uncomment the `signing_mode: inline` line + the
+#                 `signing_key:` line below; delete `signing_mode: none`.
+#              4. Put the matching public DID in `logos-repo.json`
+#                 under `trustedSigners`.
+#
+#   external — a signing rig you control (Jenkins, HSM, hardware token)
+#              produces the signed `.lgx`; the key never touches CI.
+#              Uncomment the external block; `signing_command` runs with
+#              $LGX_PATH (unsigned input) and must either modify it in
+#              place or write the signed result to $LGX_SIGNED_OUT.
+
+on:
+  workflow_call:
+    inputs:
+      module_path:
+        description: "Path to the module submodule (e.g. submodules/<repo>)."
+        type: string
+        required: true
+      force_build:
+        description: |
+          Force build — rebuild and REPLACE the already-published
+          `<module>-v<version>` release instead of skipping it. Maps to
+          the action's `skip_if_published` (inverted): false (default) =
+          skip a version that's already fully published; true = republish
+          the same version, overwriting its assets.
+        type: boolean
+        default: false
+
+# Forked repos default to a read-only GITHUB_TOKEN; the downstream
+# release job needs to create releases / upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@v1
+    with:
+      module_path: ${{ inputs.module_path }}
+
+      # Normal runs skip a version that's already fully published; "Force
+      # build" (force_build: true) republishes it by disabling that skip.
+      skip_if_published: ${{ !inputs.force_build }}
+
+      # ─── Variants (edit here, not in each caller) ───────────────────
+      # windows-x86_64 is a mingw CROSS build — an ordinary Linux runner
+      # produces the PE — and is opt-in upstream, so the full list has to
+      # be spelled out rather than left to the action's default. A module
+      # whose flake does not expose `packages.x86_64-windows` fails only
+      # that leg; the other three still publish as a partial release.
+      variants: "darwin-arm64,linux-amd64,linux-arm64,windows-x86_64"
+
+      # ─── Runners and Nix cache (set by variables, not edited here) ───
+      # Unset, every job runs GitHub-hosted and only reads the Logos cache.
+      # See "Runners and the Nix cache" in the README.
+      runner: ${{ vars.RELEASE_RUNNER }}
+      build_runners: ${{ vars.RELEASE_BUILD_RUNNERS }}
+      # ATTIC_ENDPOINT marks a repo provisioned for the Logos cache, which
+      # also gets ATTIC_TOKEN_CI and a public-cache environment.
+      cache_environment: ${{ vars.ATTIC_ENDPOINT && 'public-cache' || '' }}
+
+      # ─── Signing mode (edit here, not in each caller) ────────────────
+      signing_mode: none
+
+      # Inline signing — uncomment this line (and `signing_key:` at the
+      # bottom), then delete `signing_mode: none` above.
+      #signing_mode: inline
+
+      # External signing (Jenkins / HSM / hardware token). Uncomment and
+      # delete `signing_mode: none`. `signing_command` runs with
+      # $LGX_PATH pointing at the unsigned `.lgx`; it must modify that
+      # file in place or write the signed package to $LGX_SIGNED_OUT.
+      #
+      # signing_mode: external
+      # signing_command: |
+      #   curl -fsSL -X POST --data-binary @"$LGX_PATH" \
+      #        -H "X-Build-Id: ${GITHUB_RUN_ID}" \
+      #        -o "$LGX_SIGNED_OUT" \
+      #        "$JENKINS_SIGNING_URL"
+
+    # Reaches here via `secrets: inherit` from each caller, so the
+    # per-module files don't need to know which secret names matter.
+    secrets:
+      # Both are empty outside Logos-provisioned repos, leaving the cache
+      # read-only. ATTIC_TOKEN_PUBLIC is empty here even inside them: it lives
+      # in the public-cache environment, and a called job can only read an
+      # environment secret whose name its caller passed.
+      ATTIC_TOKEN_CI: ${{ secrets.ATTIC_TOKEN_CI }}
+      ATTIC_TOKEN_PUBLIC: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+      # Inline mode reads this; none/external ignore it. Uncomment for
+      # inline mode.
+      #signing_key: ${{ secrets.LOGOS_SIGNING_KEY }}

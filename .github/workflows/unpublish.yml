@@ -1,0 +1,48 @@
+name: Unpublish module / version
+
+# Manually REMOVE releases from this catalog: a whole module (every
+# version) or one specific version. Deletes the GitHub release(s),
+# optionally their git tags, then rebuilds index.json so clients stop
+# offering the removed package(s).
+#
+# DESTRUCTIVE + IRREVERSIBLE. Run once with `dry_run: true` first to
+# see exactly which releases match. The rolling `index` release is
+# hard-guarded against deletion by the action.
+#
+# Thin wrapper — the actual logic lives in the versioned action.
+
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Module name (the <name> in <name>-v<version> tags)."
+        required: true
+        type: string
+      version:
+        description: "Exact version to remove (e.g. 1.2.3). Blank = ALL versions."
+        required: false
+        type: string
+        default: ""
+      delete_tags:
+        description: "Also delete the git tag(s), not just the release."
+        type: boolean
+        default: true
+      dry_run:
+        description: "List what would be deleted and stop (no changes)."
+        type: boolean
+        default: false
+
+# Deleting releases/tags + dispatching the index rebuild needs write;
+# forked repos default to a read-only GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  unpublish:
+    uses: logos-co/logos-modules-release-action/.github/workflows/unpublish.yml@v1
+    with:
+      module:      ${{ inputs.module }}
+      version:     ${{ inputs.version }}
+      delete_tags: ${{ inputs.delete_tags }}
+      dry_run:     ${{ inputs.dry_run }}
+      runner:      ${{ vars.RELEASE_RUNNER }}

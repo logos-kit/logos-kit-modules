@@ -1,0 +1,27 @@
+name: Rebuild index
+
+# Regenerates the rolling `index` release (index.json — the catalog
+# clients fetch) whenever a per-module release fires the
+# `rebuild-index` repository_dispatch event. Also runs on a six-hourly
+# schedule as a catch-up so a missed dispatch can't strand the catalog,
+# and can be kicked manually from the Actions UI.
+#
+# Thin passthrough to the versioned action — nothing to configure here.
+
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [rebuild-index]
+  schedule:
+    - cron: '17 */6 * * *'
+
+# Forked repos default to a read-only GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    uses: logos-co/logos-modules-release-action/.github/workflows/rebuild-index.yml@v1
+    with:
+      # Unset means GitHub-hosted; see "Runners and the Nix cache" in the README.
+      runner: ${{ vars.RELEASE_RUNNER }}

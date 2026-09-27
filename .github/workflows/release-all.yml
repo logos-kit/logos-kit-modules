@@ -1,0 +1,66 @@
+name: Release all modules
+
+# Umbrella workflow: releases every submodule in this catalog in
+# parallel. Useful for the initial bootstrap and for coordinated
+# "everything at once" releases.
+#
+# The module list is DISCOVERED from `.gitmodules` at run time — add or
+# remove a submodule and this workflow tracks it automatically, no edits
+# here ever needed (the previous hand-maintained matrix is gone).
+#
+# Each module is released through the same _release-module.yml local
+# reusable workflow the per-module files use, so signing config stays
+# consistent between solo and bulk runs. `fail-fast: false` lets one
+# module's build fail without aborting the rest.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build — replace the current published release if it has the same version."
+        type: boolean
+        default: false
+
+# Forked repos default to a read-only GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+      count: ${{ steps.scan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Every `path = submodules/<repo>` entry in .gitmodules.
+          paths="$(git config --file .gitmodules --get-regexp 'submodule\..*\.path$' 2>/dev/null \
+                   | awk '{print $2}' | sort -u || true)"
+          if [ -z "${paths}" ]; then
+            echo 'matrix={"module_path":[]}' >> "$GITHUB_OUTPUT"
+            echo 'count=0' >> "$GITHUB_OUTPUT"
+            echo "No submodules declared in .gitmodules — nothing to release."
+            exit 0
+          fi
+          matrix="$(printf '%s\n' ${paths} | jq -R . | jq -cs '{module_path: .}')"
+          count="$(printf '%s\n' ${paths} | wc -l | tr -d ' ')"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "count=${count}"  >> "$GITHUB_OUTPUT"
+          echo "Discovered ${count} module(s):"
+          printf '  %s\n' ${paths}
+
+  release:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: ${{ matrix.module_path }}
+      force_build: ${{ inputs.force_build }}
+    secrets: inherit

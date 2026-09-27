@@ -1,0 +1,75 @@
+name: Validate catalog metadata
+
+# `logos-repo.json` and `includes.json` are the catalog's hand-edited files.
+# `includesUrl` on the first points at the second, which lists the other
+# catalogs this one draws packages from. Clients treat a malformed include as a
+# warning rather than a parse failure, so users of a broken catalog still get
+# the rest of it; the cost of that leniency is that a typo here quietly costs
+# your catalog packages with nothing failing anywhere. This is where it fails
+# instead.
+#
+# Structural only: no submodules, no releases touched. `lgx` is installed just
+# so version ranges are judged by the same implementation the clients use —
+# without it the tool reports ranges as unchecked rather than failing.
+
+on:
+  push:
+    paths:
+      - 'logos-repo.json'
+      - 'includes.json'
+      - '.github/workflows/validate-repo.yml'
+  pull_request:
+    paths:
+      - 'logos-repo.json'
+      - 'includes.json'
+      - '.github/workflows/validate-repo.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the same major tag the release workflows use, so the
+      # checker and the index builder cannot drift apart.
+      - name: Check out the catalog tool
+        uses: actions/checkout@v4
+        with:
+          repository: logos-co/logos-modules-release-tool
+          ref: v1
+          path: _tool
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install lgx
+        run: |
+          out=$(nix build github:logos-co/logos-package#lgx \
+                  --no-link --print-out-paths)
+          echo "$out/bin" >> "$GITHUB_PATH"
+
+      - name: Validate catalog metadata
+        env:
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          branch="${DEFAULT_BRANCH:-main}"
+          self="https://raw.githubusercontent.com/$REPO/refs/heads/$branch/logos-repo.json"
+
+          python3 _tool/index.py validate-repo logos-repo.json --self-url "$self"
+
+          # Optional file: a catalog that draws from nobody has none, and that
+          # is not a failure.
+          if [ -f includes.json ]; then
+            index_url=$(python3 -c \
+              'import json;print(json.load(open("logos-repo.json")).get("indexUrl",""))')
+            python3 _tool/index.py validate-includes includes.json \
+              --self-url "$self" --index-url "$index_url"
+          else
+            echo "no includes.json — this catalog draws from no others"
+          fi

@@ -1,0 +1,18 @@
+; Module submodule set for this catalog.
+;
+; This file starts empty. Add each module you want to publish as a git
+; submodule under `submodules/`. The easiest way is the helper script,
+; which also generates the matching per-module release workflow:
+;
+;   ./scripts/add-module.sh https://github.com/<owner>/<repo>
+;
+; or, by hand:
+;
+;   git submodule add https://github.com/<owner>/<repo> submodules/<repo>
+;
+; `release-all.yml` discovers modules by reading the `path = submodules/*`
+; entries in this file, so you never maintain a build matrix by hand.
+;
+; After cloning a fork, materialise the submodule working trees with:
+;
+;   git submodule update --init --recursive
