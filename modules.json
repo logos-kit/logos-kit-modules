@@ -1,6 +1,8 @@
 {
   "modules": [
     "submodules/logos-kit/modules/logos_kit_wallet",
-    "submodules/logos-kit/modules/logos_kit_wallet_ui"
+    "submodules/logos-kit/modules/logos_kit_wallet_ui",
+    "submodules/logos-kit/modules/logos_kit_testimonial",
+    "submodules/logos-kit/modules/logos_kit_faucet"
   ]
 }

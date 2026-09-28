@@ -40,6 +40,8 @@ jobs:
     outputs:
       core_needed: ${{ steps.check.outputs.core_needed }}
       ui_needed: ${{ steps.check.outputs.ui_needed }}
+      testimonial_needed: ${{ steps.check.outputs.testimonial_needed }}
+      faucet_needed: ${{ steps.check.outputs.faucet_needed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,8 +90,15 @@ jobs:
           }
           core_needed=$(needs_release "logos_kit_wallet-v$core")
           ui_needed=$(needs_release "logos_kit_wallet_ui-v$ui")
+          # The mini-apps version on their own (they call the wallet's intents).
+          testimonial=$(jq -er .version submodules/logos-kit/modules/logos_kit_testimonial/metadata.json)
+          faucet=$(jq -er .version submodules/logos-kit/modules/logos_kit_faucet/metadata.json)
+          testimonial_needed=$(needs_release "logos_kit_testimonial-v$testimonial")
+          faucet_needed=$(needs_release "logos_kit_faucet-v$faucet")
           echo "core_needed=$core_needed" >> "$GITHUB_OUTPUT"
           echo "ui_needed=$ui_needed" >> "$GITHUB_OUTPUT"
+          echo "testimonial_needed=$testimonial_needed" >> "$GITHUB_OUTPUT"
+          echo "faucet_needed=$faucet_needed" >> "$GITHUB_OUTPUT"
           {
             echo "### Release gate"
             echo
@@ -97,6 +106,8 @@ jobs:
             echo "- version: \`$core\`"
             echo "- \`logos_kit_wallet\` needs releasing: \`$core_needed\`"
             echo "- \`logos_kit_wallet_ui\` needs releasing: \`$ui_needed\`"
+            echo "- \`logos_kit_testimonial\` $testimonial needs releasing: \`$testimonial_needed\`"
+            echo "- \`logos_kit_faucet\` $faucet needs releasing: \`$faucet_needed\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Core first: the UI's metadata.json depends on logos_kit_wallet, which
@@ -124,4 +135,34 @@ jobs:
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/logos-kit/modules/logos_kit_wallet_ui
+    secrets: inherit
+
+  # The mini-apps after the wallet they depend on (core + the UI that
+  # provides the intents), each only when its version isn't published yet.
+  testimonial:
+    needs: [gate, core, ui]
+    if: >-
+      always()
+      && needs.gate.outputs.testimonial_needed == 'true'
+      && (needs.core.result == 'success' || needs.core.result == 'skipped')
+      && (needs.ui.result == 'success' || needs.ui.result == 'skipped')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: submodules/logos-kit/modules/logos_kit_testimonial
+    secrets: inherit
+
+  faucet:
+    needs: [gate, core, ui, testimonial]
+    if: >-
+      always()
+      && needs.gate.outputs.faucet_needed == 'true'
+      && (needs.core.result == 'success' || needs.core.result == 'skipped')
+      && (needs.ui.result == 'success' || needs.ui.result == 'skipped')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: submodules/logos-kit/modules/logos_kit_faucet
     secrets: inherit
