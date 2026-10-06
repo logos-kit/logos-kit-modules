@@ -9,7 +9,15 @@ name: Release on merge
 #
 #   pointer on logos-kit main, 0.2.0 unreleased  ->  publish 0.2.0
 #   pointer on logos-kit main, 0.2.0 released    ->  gate exits
+#   0.2.0 released without every platform        ->  rebuild and replace it
 #   pointer NOT on logos-kit main                ->  gate fails, nothing runs
+#
+# A build leg can fail for reasons outside our code (0.2.0's linux-amd64
+# leg could not download the Qt source from any mirror). The release action
+# still publishes the platforms that built and records the rest under
+# `missingVariants` in sidecar.json, and it counts that release as done. We
+# don't: a release missing a platform is rebuilt with force_build, and a run
+# that fails dispatches itself once more so a flaky mirror heals unattended.
 #
 # "On logos-kit main" is the green-build guarantee: logos-kit only merges
 # to main after its stage checks pass, so a pointer to a stage branch
@@ -24,7 +32,12 @@ on:
       - '.gitmodules'
       - 'submodules/**'
       - 'modules.json'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      auto_retry:
+        description: "Dispatch one more run if this one fails (the automatic retry sets this to false)."
+        type: boolean
+        default: true
 
 # One group across every workflow that can publish. See release-all.yml.
 concurrency:
@@ -74,18 +87,24 @@ jobs:
             exit 1
           fi
 
-          # "Published" means what the release action means: the tag exists
-          # and carries both a .lgx and a sidecar.json. Anything less is a
-          # partial publish and gets redone.
+          # "Published" means every platform we build is in the release:
+          # the tag carries a .lgx and a sidecar.json, and the sidecar lists
+          # no missingVariants. The answer is false (done), true (nothing
+          # there yet) or force (partial: rebuild and replace it).
           needs_release() {
-            local tag="$1" assets
+            local tag="$1" assets missing
             assets=$(gh api "repos/$REPO/releases/tags/$tag" --jq '[.assets[].name]' 2>/dev/null) || {
               echo "  $tag: no release" >&2; echo true; return
             }
-            if jq -e 'any(.[]; endswith(".lgx")) and any(.[]; . == "sidecar.json")' <<<"$assets" >/dev/null; then
+            if ! jq -e 'any(.[]; endswith(".lgx")) and any(.[]; . == "sidecar.json")' <<<"$assets" >/dev/null; then
+              echo "  $tag: missing assets ($assets)" >&2; echo true; return
+            fi
+            missing=$(gh release download "$tag" --repo "$REPO" -p sidecar.json -O - \
+                        | jq -c '.missingVariants // []') || missing='["unreadable sidecar"]'
+            if [[ "$missing" == "[]" ]]; then
               echo "  $tag: published" >&2; echo false
             else
-              echo "  $tag: partial ($assets)" >&2; echo true
+              echo "  $tag: partial, missing $missing" >&2; echo force
             fi
           }
           core_needed=$(needs_release "logos_kit_wallet-v$core")
@@ -114,12 +133,13 @@ jobs:
   # Basecamp resolves from the index.
   core:
     needs: gate
-    if: needs.gate.outputs.core_needed == 'true'
+    if: needs.gate.outputs.core_needed != 'false'
     permissions:
       contents: write
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/logos-kit/modules/logos_kit_wallet
+      force_build: ${{ needs.gate.outputs.core_needed == 'force' }}
     secrets: inherit
 
   ui:
@@ -128,13 +148,15 @@ jobs:
     needs: [gate, core]
     if: >-
       always()
-      && needs.gate.outputs.ui_needed == 'true'
+      && needs.gate.result == 'success'
+      && needs.gate.outputs.ui_needed != 'false'
       && (needs.core.result == 'success' || needs.core.result == 'skipped')
     permissions:
       contents: write
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/logos-kit/modules/logos_kit_wallet_ui
+      force_build: ${{ needs.gate.outputs.ui_needed == 'force' }}
     secrets: inherit
 
   # The mini-apps after the wallet they depend on (core + the UI that
@@ -143,7 +165,8 @@ jobs:
     needs: [gate, core, ui]
     if: >-
       always()
-      && needs.gate.outputs.testimonial_needed == 'true'
+      && needs.gate.result == 'success'
+      && needs.gate.outputs.testimonial_needed != 'false'
       && (needs.core.result == 'success' || needs.core.result == 'skipped')
       && (needs.ui.result == 'success' || needs.ui.result == 'skipped')
     permissions:
@@ -151,13 +174,15 @@ jobs:
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/logos-kit/modules/logos_kit_testimonial
+      force_build: ${{ needs.gate.outputs.testimonial_needed == 'force' }}
     secrets: inherit
 
   faucet:
     needs: [gate, core, ui, testimonial]
     if: >-
       always()
-      && needs.gate.outputs.faucet_needed == 'true'
+      && needs.gate.result == 'success'
+      && needs.gate.outputs.faucet_needed != 'false'
       && (needs.core.result == 'success' || needs.core.result == 'skipped')
       && (needs.ui.result == 'success' || needs.ui.result == 'skipped')
     permissions:
@@ -165,4 +190,28 @@ jobs:
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/logos-kit/modules/logos_kit_faucet
+      force_build: ${{ needs.gate.outputs.faucet_needed == 'force' }}
     secrets: inherit
+
+  # One more attempt when a release job failed, dispatched as a new run: it
+  # queues behind this one (same concurrency group), and its gate rebuilds
+  # only what is still missing or partial. That run doesn't retry again.
+  retry:
+    needs: [gate, core, ui, testimonial, faucet]
+    if: >-
+      always()
+      && needs.gate.result == 'success'
+      && contains(needs.*.result, 'failure')
+      && (github.event_name == 'push' || inputs.auto_retry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch one more Release on merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh workflow run release-on-merge.yml --repo "$REPO" --ref main -f auto_retry=false
+          echo "Dispatched one retry of Release on merge." >> "$GITHUB_STEP_SUMMARY"
